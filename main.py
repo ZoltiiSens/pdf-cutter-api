@@ -19,7 +19,7 @@ WEBHOOK_URL = 'https://google.com'
 
 
 @app.post('/pdf/cut')
-async def create_file(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], response: Response):
+async def cut_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], response: Response):
     """Realises cutting functional and returns resulted PDF-file"""
     try:
         pages = [int(i) for i in configuration.split(",")]
@@ -60,7 +60,7 @@ async def create_file(file: Annotated[bytes, File()], configuration: Annotated[s
 
 
 @app.post('/pdf/cut_save')
-async def save_pdf(
+async def cut_and_save_pdf(
         file: Annotated[bytes, File()],
         configuration: Annotated[str, Form()],
         fileId: Annotated[str, Form()],
@@ -136,7 +136,7 @@ async def extract_images(file: Annotated[bytes, File()], response: Response):
 
 
 @app.post('/pdf/extract_text')
-async def extract_images(file: Annotated[bytes, File()], response: Response):
+async def extract_text(file: Annotated[bytes, File()], response: Response):
     pdf_filename = f'tmp_{time()}_{len(listdir("."))}.pdf'
     with open(pdf_filename, 'wb') as f:
         f.write(file)
@@ -153,6 +153,38 @@ async def extract_images(file: Annotated[bytes, File()], response: Response):
     cleanup(pdf_filename)
     response.status_code = HTTP_200_OK
     return text
+
+
+@app.get('/pdf/get', tags=['work_with_files'])
+def get_pdf_list(response: Response):
+    return listdir('files')
+
+
+@app.get('/pdf/get/{fileId}', tags=['work_with_files'])
+def get_pdf_by_id(fileId: str, response: Response):
+    if os.path.isfile(f'files/{fileId}.pdf'):
+        response.status_code = HTTP_200_OK
+        response = FileResponse(
+            f'files/{fileId}.pdf',
+            media_type="application/pdf",
+            headers={'Content-Disposition': f'attachment; filename="{fileId}.pdf"'},
+        )
+        response.status_code =HTTP_200_OK
+        return response
+    else:
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'invalid file id'}
+
+
+@app.delete('/pdf/get/{fileId}', tags=['work_with_files'])
+def delete_pdf_by_id(fileId: str, response: Response):
+    if os.path.isfile(f'files/{fileId}.pdf'):
+        remove(f'files/{fileId}.pdf')
+        response.status_code = HTTP_200_OK
+        return {'info': 'Done!'}
+    else:
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'invalid file id'}
 
 
 def zip_files(images_filenames, base_filename):
