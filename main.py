@@ -176,7 +176,7 @@ def get_pdf_by_id(fileId: str, response: Response):
         return {'error': 'invalid file id'}
 
 
-@app.delete('/pdf/get/{fileId}', tags=['work_with_files'])
+@app.delete('/pdf/delete/{fileId}', tags=['work_with_files'])
 def delete_pdf_by_id(fileId: str, response: Response):
     if os.path.isfile(f'files/{fileId}.pdf'):
         remove(f'files/{fileId}.pdf')
