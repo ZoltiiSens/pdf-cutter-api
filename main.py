@@ -1,41 +1,57 @@
+import os
 from os import remove, listdir
 from fastapi import FastAPI, File, Form
 from typing import Annotated
 from time import time
 from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2.errors import PdfReadError
 from starlette.responses import FileResponse
 from starlette.background import BackgroundTask
-import requests
+from zipfile import ZipFile
+# from PIL import Image
+# from pydantic import BaseModel
+# import requests
 
 
 app = FastAPI()
-
 WEBHOOK_URL = 'https://google.com'
 
 
-@app.post("/cut_pdf")
+# class PdfExtractContentModel(BaseModel):
+#     getText: bool = True
+#     getImage: bool = True
+
+
+@app.post('/cut_pdf')
 async def create_file(file: Annotated[bytes, File()], configuration: Annotated[str, Form()]):
+    """Realises cutting functional and returns resulted PDF-file"""
     try:
         pages = [int(i) for i in configuration.split(",")]
         pages.sort()
     except ValueError:
         return {'error': 'wrong configuration data: incorrect format'}
     filename = f'tmp_{time()}_{len(listdir("."))}.pdf'
+    pdf_filename = filename.replace('.pdf', '_new.pdf')
     with open(filename, 'wb') as f:
         f.write(file)
         f.close()
-    filePDF = PdfReader(filename)
+    try:
+        filePDF = PdfReader(filename)
+    except PdfReadError:
+        cleanup(filename)
+        return {'error': 'wrong file format'}
     pdfWriter = PdfWriter()
     try:
         for page in pages:
             pdfWriter.add_page(filePDF.pages[page])
-        with open(filename.replace('.pdf', '_new.pdf'), 'wb') as f:
+        with open(pdf_filename, 'wb') as f:
             pdfWriter.write(f)
             f.close()
         response = FileResponse(
-            filename.replace('.pdf', '_new.pdf'),
+            pdf_filename,
             media_type="application/pdf",
-            background=BackgroundTask(cleanup, filename),
+            background=BackgroundTask(cleanup, filename, pdf_filename),
+            headers={'Content-Disposition': f'attachment; filename="{pdf_filename}"'},
         )
     except IndexError:
         remove(filename)
@@ -43,8 +59,9 @@ async def create_file(file: Annotated[bytes, File()], configuration: Annotated[s
     return response
 
 
-@app.post("/save_pdf")
+@app.post('/save_pdf')
 async def save_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], fileId: Annotated[str, Form()]):
+    """Realises cutting functional, saves cut files, send info to webhook and returns info message"""
     try:
         pages = [int(i) for i in configuration.split(",")]
         pages.sort()
@@ -54,7 +71,11 @@ async def save_pdf(file: Annotated[bytes, File()], configuration: Annotated[str,
     with open(path, 'wb') as f:
         f.write(file)
         f.close()
-    filePDF = PdfReader(path)
+    try:
+        filePDF = PdfReader(path)
+    except PdfReadError:
+        cleanup(path)
+        return {'error': 'wrong file format'}
     pdfWriter = PdfWriter()
     try:
         for page in pages:
@@ -68,84 +89,54 @@ async def save_pdf(file: Annotated[bytes, File()], configuration: Annotated[str,
     return {'info': 'Done!'}
 
 
-def cleanup(filename):
-    remove(filename)
-    remove(filename.replace('.pdf', '_new.pdf'))
+@app.post('/pdf/extract_images')
+async def extract_images(file: Annotated[bytes, File()]):
+    filename = f'tmp_{time()}_{len(listdir("."))}'
+    with open(f'{filename}.pdf', 'wb') as f:
+        f.write(file)
+        f.close()
+    try:
+        filePDF = PdfReader(f'{filename}.pdf')
+    except PdfReadError:
+        cleanup(f'{filename}.pdf')
+        return {'error': 'wrong file format'}
+    pages = filePDF.pages
+    counter = 0
+    images_filenames = []
+    for page in pages:
+        for imageFileObject in page.images:
+            with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
+                f.write(imageFileObject.data)
+            images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
+            counter += 1
+    if counter:
+        zip_filename = zip_files(images_filenames, filename)
+        cleanup(f'{filename}.pdf', *images_filenames)
+        response = FileResponse(
+            zip_filename,
+            media_type="application/x-zip-compressed",
+            headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
+            background=BackgroundTask(cleanup, zip_filename),
+        )
+    else:
+        response = {'info': 'there is no images'}
+    return response
+
+
+def zip_files(images_filenames, base_filename):
+    zip_filename = f'{base_filename}.zip'
+    with ZipFile(zip_filename, 'w') as f:
+        for image_filename in images_filenames:
+            fdir, fname = os.path.split(image_filename)
+            f.write(image_filename, fname)
+    return zip_filename
+
+
+def cleanup(*filenames):
+    for filename in filenames:
+        remove(filename)
 
 
 
 
 
-# @app.post("/files/")
-# async def create_file(file: Annotated[bytes, File()], configuration: Annotated[list, Form()]):
-#     print(configuration)
-#     return {"file_size": len(file)}
-
-
-
-
-
-# from fastapi import FastAPI, File, UploadFile
-# from typing import Annotated
-#
-# app = FastAPI()
-#
-#
-# @app.get('/')
-# def index():
-#     return 'hello'
-#
-#
-# @app.post('/recombine_pdf')
-# def recombine_pdf(file: Annotated[bytes, File()]):
-#     return {'file': file}
-#
-#
-# @app.post("/files/")
-# async def create_file(file: Annotated[bytes, File()]):
-#     print(file)
-#     filePDF = open('new.pdf', 'wb')
-#     filePDF.write(file)
-#     # for line in open('code.txt', 'rb').readlines():
-#     #     file.write(line)
-#
-#
-#     filePDF.close()
-#     return {"file_size": len(file)}
-#
-#
-# @app.post('/recombine_pdf_new')
-# def recombine_pdf_new(file: UploadFile):
-#     print(file)
-#     return {'file': file}
-#
-
-
-
-
-
-
-
-#
-# from fastapi import FastAPI, File, UploadFile
-# from pydantic import BaseModel
-#
-#
-# class DocumentCutModel(BaseModel):
-#     configuration: str
-#
-#
-# app = FastAPI()
-#
-#
-# @app.post("/uploadfile/")
-# async def create_upload_file(file: UploadFile, configuration: str):
-#     print(file)
-#     return "123"
-#     # contents = await data.file.read()
-#     # filePDF = open('new.pdf', 'wb')
-#     # print(data.configuration)
-#     # filePDF.write(contents)
-#     # filePDF.close()
-#     # print(contents)
-#     # return {"file": data.file}
