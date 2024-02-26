@@ -67,6 +67,8 @@ async def save_pdf(
         response: Response
 ):
     """Realises cutting functional, saves cut files, send info to webhook and returns info message"""
+    if not os.path.isdir('files'):
+        os.mkdir('files')
     try:
         pages = [int(i) for i in configuration.split(",")]
         pages.sort()
