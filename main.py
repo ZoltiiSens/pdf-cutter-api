@@ -100,8 +100,8 @@ async def cut_and_save_pdf(
     return {'info': 'Done!'}
 
 
-@app.post('/pdf/extract_images')
-async def extract_images(file: Annotated[bytes, File()], response: Response):
+@app.post('/pdf/extract_content')
+async def extract_content(file: Annotated[bytes, File()], response: Response):
     filename = f'tmp_{time()}_{len(listdir("."))}'
     with open(f'{filename}.pdf', 'wb') as f:
         f.write(file)
@@ -114,45 +114,85 @@ async def extract_images(file: Annotated[bytes, File()], response: Response):
         return {'error': 'wrong file format'}
     counter = 0
     images_filenames = []
+    text = ''
     for page in filePDF.pages:
+        text += page.extract_text() + '\n'
         for imageFileObject in page.images:
             with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
                 f.write(imageFileObject.data)
             images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
             counter += 1
-    if counter:
-        zip_filename = zip_files(images_filenames, filename)
-        cleanup(f'{filename}.pdf', *images_filenames)
-        response = FileResponse(
-            zip_filename,
-            media_type="application/x-zip-compressed",
-            headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
-            background=BackgroundTask(cleanup, zip_filename),
-        )
-    else:
-        response.status_code = HTTP_200_OK
-        response = {'info': 'there is no images'}
+    with open(f'{filename}.txt', 'w') as f:
+        f.write(text)
+    images_filenames.append(f'{filename}.txt')
+    zip_filename = zip_files(images_filenames, filename)
+    cleanup(f'{filename}.pdf', *images_filenames)
+    response = FileResponse(
+        zip_filename,
+        media_type="application/x-zip-compressed",
+        headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
+        background=BackgroundTask(cleanup, zip_filename),
+    )
     return response
 
 
-@app.post('/pdf/extract_text')
-async def extract_text(file: Annotated[bytes, File()], response: Response):
-    pdf_filename = f'tmp_{time()}_{len(listdir("."))}.pdf'
-    with open(pdf_filename, 'wb') as f:
-        f.write(file)
-        f.close()
-    try:
-        filePDF = PdfReader(pdf_filename)
-    except PdfReadError:
-        cleanup(pdf_filename)
-        response.status_code = HTTP_400_BAD_REQUEST
-        return {'error': 'wrong file format'}
-    text = ''
-    for page in filePDF.pages:
-        text += page.extract_text() + '\n'
-    cleanup(pdf_filename)
-    response.status_code = HTTP_200_OK
-    return text
+# @app.post('/pdf/extract_images')
+# async def extract_images(file: Annotated[bytes, File()], response: Response):
+#     filename = f'tmp_{time()}_{len(listdir("."))}'
+#     with open(f'{filename}.pdf', 'wb') as f:
+#         f.write(file)
+#         f.close()
+#     try:
+#         filePDF = PdfReader(f'{filename}.pdf')
+#     except PdfReadError:
+#         cleanup(f'{filename}.pdf')
+#         response.status_code = HTTP_400_BAD_REQUEST
+#         return {'error': 'wrong file format'}
+#     counter = 0
+#     images_filenames = []
+#     for page in filePDF.pages:
+#         for imageFileObject in page.images:
+#             with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
+#                 f.write(imageFileObject.data)
+#             images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
+#             counter += 1
+#     if counter:
+#         zip_filename = zip_files(images_filenames, filename)
+#         cleanup(f'{filename}.pdf', *images_filenames)
+#         response = FileResponse(
+#             zip_filename,
+#             media_type="application/x-zip-compressed",
+#             headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
+#             background=BackgroundTask(cleanup, zip_filename),
+#         )
+#     else:
+#         response.status_code = HTTP_200_OK
+#         response = {'info': 'there is no images'}
+#     return response
+#
+#
+# @app.post('/pdf/extract_text')
+# async def pdf_extract_text(file: Annotated[bytes, File()], response: Response):
+#     pdf_filename = f'tmp_{time()}_{len(listdir("."))}.pdf'
+#     with open(pdf_filename, 'wb') as f:
+#         f.write(file)
+#         f.close()
+#     try:
+#         filePDF = PdfReader(pdf_filename)
+#     except PdfReadError:
+#         cleanup(pdf_filename)
+#         response.status_code = HTTP_400_BAD_REQUEST
+#         return {'error': 'wrong file format'}
+#     text = ''
+#     for page in filePDF.pages:
+#         text += page.extract_text() + '\n'
+#     cleanup(pdf_filename)
+#     response.status_code = HTTP_200_OK
+#     return text
+
+
+# @app.post('/image/extract_text')
+# async def image_extract_text(file: Annotated[bytes, File()], response: Response):
 
 
 @app.get('/pdf/get', tags=['work_with_files'])
