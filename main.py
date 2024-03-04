@@ -9,13 +9,33 @@ from starlette.responses import FileResponse
 from starlette.background import BackgroundTask
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_200_OK
 from zipfile import ZipFile
+from PIL import Image
+from pytesseract import pytesseract
 # from PIL import Image
 # from pydantic import BaseModel
 # import requests
 
 
+class ImageReader:
+    def __init__(self, os):
+        if os == 'WINDOWS':
+            windows_path = r'D:\tesseract\tesseract.exe'
+            pytesseract.tesseract_cmd = windows_path
+        if os == 'MAC':
+            pass
+        if os == 'LINUX':
+            pass
+
+    @staticmethod
+    def extract_text(image_path, language):
+        img = Image.open(image_path)
+        extracted_text = pytesseract.image_to_string(img, lang=language)
+        return extracted_text
+
+
 app = FastAPI()
 WEBHOOK_URL = 'https://google.com'
+imageReader = ImageReader('WINDOWS')
 
 
 @app.post('/pdf/cut')
@@ -136,60 +156,48 @@ async def extract_content(file: Annotated[bytes, File()], response: Response):
     return response
 
 
-# @app.post('/pdf/extract_images')
-# async def extract_images(file: Annotated[bytes, File()], response: Response):
-#     filename = f'tmp_{time()}_{len(listdir("."))}'
-#     with open(f'{filename}.pdf', 'wb') as f:
-#         f.write(file)
-#         f.close()
-#     try:
-#         filePDF = PdfReader(f'{filename}.pdf')
-#     except PdfReadError:
-#         cleanup(f'{filename}.pdf')
-#         response.status_code = HTTP_400_BAD_REQUEST
-#         return {'error': 'wrong file format'}
-#     counter = 0
-#     images_filenames = []
-#     for page in filePDF.pages:
-#         for imageFileObject in page.images:
-#             with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
-#                 f.write(imageFileObject.data)
-#             images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
-#             counter += 1
-#     if counter:
-#         zip_filename = zip_files(images_filenames, filename)
-#         cleanup(f'{filename}.pdf', *images_filenames)
-#         response = FileResponse(
-#             zip_filename,
-#             media_type="application/x-zip-compressed",
-#             headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
-#             background=BackgroundTask(cleanup, zip_filename),
-#         )
-#     else:
-#         response.status_code = HTTP_200_OK
-#         response = {'info': 'there is no images'}
-#     return response
-#
-#
-# @app.post('/pdf/extract_text')
-# async def pdf_extract_text(file: Annotated[bytes, File()], response: Response):
-#     pdf_filename = f'tmp_{time()}_{len(listdir("."))}.pdf'
-#     with open(pdf_filename, 'wb') as f:
-#         f.write(file)
-#         f.close()
-#     try:
-#         filePDF = PdfReader(pdf_filename)
-#     except PdfReadError:
-#         cleanup(pdf_filename)
-#         response.status_code = HTTP_400_BAD_REQUEST
-#         return {'error': 'wrong file format'}
-#     text = ''
-#     for page in filePDF.pages:
-#         text += page.extract_text() + '\n'
-#     cleanup(pdf_filename)
-#     response.status_code = HTTP_200_OK
-#     return text
+@app.post('/pdf/get_all_text')
+def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
+    filename = f'tmp_{time()}_{len(listdir("."))}'
+    with open(f'{filename}.pdf', 'wb') as f:
+        f.write(file)
+        f.close()
+    try:
+        filePDF = PdfReader(f'{filename}.pdf')
+    except PdfReadError:
+        cleanup(f'{filename}.pdf')
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'wrong file format'}
+    counter = 0
+    images_filenames = []
+    text = ''
+    for page in filePDF.pages:
+        text += page.extract_text() + '\n'
+        for imageFileObject in page.images:
+            with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
+                f.write(imageFileObject.data)
+            images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
+            textFromImage = imageReader.extract_text(f'{filename}-{counter}-{imageFileObject.name}', language='eng+ukr')
+            print(f'text from image: {textFromImage}')
+            text += ' '.join(textFromImage.strip().strip('\n').split())
+            counter += 1
+    cleanup(f'{filename}.pdf', *images_filenames)
+    return {'text': text}
 
+
+# @app.post('/doc/convert_to_pdf')
+# def convert_to_pdf(file: Annotated[bytes, File()], response: Response):
+#     filename = f'tmp_{time()}_{len(listdir("."))}'
+#     with open(f'{filename}.doc', 'wb') as f:
+#         f.write(file)
+#         f.close()
+#     # try:
+#     convert2(filename + '.doc', filename + '.pdf')
+#     # convert(filename + '.docx', filename + '.pdf')
+#     # except
+#     # cleanup(filename + '.docx', filename + '.pdf')
+#     cleanup(filename + '.doc')
+#     return 'success'
 
 # @app.post('/image/extract_text')
 # async def image_extract_text(file: Annotated[bytes, File()], response: Response):
