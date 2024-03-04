@@ -35,7 +35,7 @@ class ImageReader:
 
 app = FastAPI()
 WEBHOOK_URL = 'https://google.com'
-imageReader = ImageReader('WINDOWS')
+imageReader = ImageReader('LINUX')
 
 
 @app.post('/pdf/cut')
