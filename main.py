@@ -11,6 +11,14 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_200_OK
 from zipfile import ZipFile
 from PIL import Image
 from pytesseract import pytesseract
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
+
 # from PIL import Image
 # from pydantic import BaseModel
 # import requests
@@ -35,7 +43,25 @@ class ImageReader:
 
 app = FastAPI()
 WEBHOOK_URL = 'https://google.com'
-imageReader = ImageReader('LINUX')
+imageReader = ImageReader('WINDOWS')
+GOOGLE_SCOPES = [
+    'https://www.googleapis.com/auth/drive'
+]
+CREDS = None
+if os.path.exists("token.json"):
+    CREDS = Credentials.from_authorized_user_file("token.json", GOOGLE_SCOPES)
+if not CREDS or not CREDS.valid:
+    if CREDS and CREDS.expired and CREDS.refresh_token:
+        CREDS.refresh(Request())
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            client_secrets_file="credentials.json",
+            scopes=GOOGLE_SCOPES
+        )
+        CREDS = flow.run_local_server(port=0)
+    with open("token.json", "w") as token:
+        token.write(CREDS.to_json())
+service = build("drive", "v3", credentials=CREDS)
 
 
 @app.post('/pdf/cut')
@@ -183,6 +209,56 @@ def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
             counter += 1
     cleanup(f'{filename}.pdf', *images_filenames)
     return {'text': text}
+
+
+@app.post('/doc/convert_to_pdf')
+def convert_doc_or_docx_to_pdf(file: Annotated[bytes, File()], extension: Annotated[str, Form()], response: Response):
+    print(extension)
+    if extension != 'doc' and extension != 'docx':
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'Unsupported extension: write "doc" or "docx"'}
+    try:
+        filename = f'tmp_{time()}_{len(listdir("."))}'
+        doc_filename = f'{filename}.{extension}'
+        pdf_filename = f'{filename}.pdf'
+        with open(doc_filename, 'wb') as f:
+            f.write(file)
+        doc_docx_to_pdf(doc_filename, pdf_filename)
+        file_response = FileResponse(
+            pdf_filename,
+            media_type="application/pdf",
+            background=BackgroundTask(cleanup, pdf_filename, doc_filename),
+            headers={'Content-Disposition': f'attachment; filename="{pdf_filename}"'},
+        )
+        response.status_code = HTTP_200_OK
+        return file_response
+    except HttpError as error:
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': error}
+
+
+def doc_docx_to_pdf(input_filename, output_filename):
+    file_media_body = MediaFileUpload(input_filename, resumable=True)
+    word_file_id = service.files().create(
+        body={'name': input_filename},
+        media_body=file_media_body,
+        fields='id').execute()['id']
+    googledoc_file_id = service.files().copy(
+        fileId=word_file_id,
+        body={'mimeType': 'application/vnd.google-apps.document'},
+        fields='id').execute()['id']
+    pdf_file = service.files().export(fileId=googledoc_file_id, mimeType='application/pdf').execute()
+    with open(output_filename, 'wb') as f:
+        f.write(pdf_file)
+    service.files().delete(fileId=word_file_id).execute()
+    service.files().delete(fileId=googledoc_file_id).execute()
+    service.files().emptyTrash().execute()
+
+
+
+
+
+
 
 
 # @app.post('/doc/convert_to_pdf')
