@@ -64,7 +64,7 @@ if not CREDS or not CREDS.valid:
 service = build("drive", "v3", credentials=CREDS)
 
 
-@app.post('/pdf/cut')
+@app.post('/pdf/cut', tags=['pdf'])
 async def cut_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], response: Response):
     """Realises cutting functional and returns resulted PDF-file"""
     try:
@@ -105,7 +105,7 @@ async def cut_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, 
     return response
 
 
-@app.post('/pdf/cut_save')
+@app.post('/pdf/cut_save', tags=['pdf'])
 async def cut_and_save_pdf(
         file: Annotated[bytes, File()],
         configuration: Annotated[str, Form()],
@@ -146,7 +146,7 @@ async def cut_and_save_pdf(
     return {'info': 'Done!'}
 
 
-@app.post('/pdf/extract_content')
+@app.post('/pdf/extract_content', tags=['pdf'])
 async def extract_content(file: Annotated[bytes, File()], response: Response):
     filename = f'tmp_{time()}_{len(listdir("."))}'
     with open(f'{filename}.pdf', 'wb') as f:
@@ -182,7 +182,7 @@ async def extract_content(file: Annotated[bytes, File()], response: Response):
     return response
 
 
-@app.post('/pdf/get_all_text')
+@app.post('/pdf/get_all_text', tags=['pdf'])
 def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
     filename = f'tmp_{time()}_{len(listdir("."))}'
     with open(f'{filename}.pdf', 'wb') as f:
@@ -211,16 +211,15 @@ def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
     return {'text': text}
 
 
-@app.post('/doc/convert_to_pdf')
+@app.post('/doc/convert_to_pdf', tags=['docs'])
 def convert_doc_or_docx_to_pdf(file: Annotated[bytes, File()], extension: Annotated[str, Form()], response: Response):
-    print(extension)
     if extension != 'doc' and extension != 'docx':
         response.status_code = HTTP_400_BAD_REQUEST
         return {'error': 'Unsupported extension: write "doc" or "docx"'}
+    filename = f'tmp_{time()}_{len(listdir("."))}'
+    doc_filename = f'{filename}.{extension}'
+    pdf_filename = f'{filename}.pdf'
     try:
-        filename = f'tmp_{time()}_{len(listdir("."))}'
-        doc_filename = f'{filename}.{extension}'
-        pdf_filename = f'{filename}.pdf'
         with open(doc_filename, 'wb') as f:
             f.write(file)
         doc_docx_to_pdf(doc_filename, pdf_filename)
@@ -233,58 +232,107 @@ def convert_doc_or_docx_to_pdf(file: Annotated[bytes, File()], extension: Annota
         response.status_code = HTTP_200_OK
         return file_response
     except HttpError as error:
+        cleanup(doc_filename, pdf_filename)
         response.status_code = HTTP_400_BAD_REQUEST
         return {'error': error}
 
 
-def doc_docx_to_pdf(input_filename, output_filename):
-    file_media_body = MediaFileUpload(input_filename, resumable=True)
-    word_file_id = service.files().create(
-        body={'name': input_filename},
-        media_body=file_media_body,
-        fields='id').execute()['id']
-    googledoc_file_id = service.files().copy(
-        fileId=word_file_id,
-        body={'mimeType': 'application/vnd.google-apps.document'},
-        fields='id').execute()['id']
-    pdf_file = service.files().export(fileId=googledoc_file_id, mimeType='application/pdf').execute()
-    with open(output_filename, 'wb') as f:
-        f.write(pdf_file)
-    service.files().delete(fileId=word_file_id).execute()
-    service.files().delete(fileId=googledoc_file_id).execute()
-    service.files().emptyTrash().execute()
+@app.post('/doc/cut', tags=['docs'])
+def cut_doc(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], extension: Annotated[str, Form()], response: Response):
+    """Realises cutting functional and returns resulted PDF-file"""
+    if extension != 'doc' and extension != 'docx':
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'Unsupported extension: write "doc" or "docx"'}
+    try:
+        pages = [int(i) for i in configuration.split(",")]
+        pages.sort()
+    except ValueError:
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'wrong configuration data: incorrect format'}
+    filename = f'tmp_{time()}_{len(listdir("."))}'
+    doc_filename = f'{filename}.{extension}'
+    pdf_filename = f'{filename}.pdf'
+    pdf_new_filename = f'{filename}_new.pdf'
+    with open(doc_filename, 'wb') as f:
+        f.write(file)
+    try:
+        doc_docx_to_pdf(doc_filename, pdf_filename)
+    except HttpError as error:
+        cleanup(doc_filename, pdf_filename)
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': error}
+    try:
+        filePDF = PdfReader(pdf_filename)
+    except PdfReadError:
+        cleanup(doc_filename, pdf_filename)
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'wrong file format'}
+    pdfWriter = PdfWriter()
+    try:
+        for page in pages:
+            pdfWriter.add_page(filePDF.pages[page])
+        with open(pdf_new_filename, 'wb') as f:
+            pdfWriter.write(f)
+            f.close()
+        response = FileResponse(
+            pdf_new_filename,
+            media_type="application/pdf",
+            background=BackgroundTask(cleanup, doc_filename, pdf_filename, pdf_new_filename),
+            headers={'Content-Disposition': f'attachment; filename="{pdf_new_filename}"'},
+        )
+    except IndexError:
+        cleanup(doc_filename, pdf_filename)
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'wrong configuration data: index out of range'}
+    response.status_code = HTTP_200_OK
+    return response
 
 
+@app.post('/doc/get_all_text', tags=['docs'])
+def doc_get_all_text(file: Annotated[bytes, File()], extension: Annotated[str, Form()], response: Response):
+    if extension not in ['doc', 'docx']:
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'Unsupported extension: write "doc" or "docx"'}
+    filename = f'tmp_{time()}_{len(listdir("."))}'
+    doc_filename = f'{filename}.{extension}'
+    pdf_filename = f'{filename}.pdf'
+    with open(doc_filename, 'wb') as f:
+        f.write(file)
+    try:
+        doc_docx_to_pdf(doc_filename, pdf_filename)
+    except HttpError as error:
+        cleanup(doc_filename, pdf_filename)
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': error}
+    try:
+        filePDF = PdfReader(pdf_filename)
+    except PdfReadError:
+        cleanup(doc_filename, pdf_filename)
+        response.status_code = HTTP_400_BAD_REQUEST
+        return {'error': 'wrong file format'}
+    counter = 0
+    images_filenames = []
+    text = ''
+    for page in filePDF.pages:
+        text += page.extract_text() + '\n'
+        for imageFileObject in page.images:
+            with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
+                f.write(imageFileObject.data)
+            images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
+            textFromImage = imageReader.extract_text(f'{filename}-{counter}-{imageFileObject.name}', language='eng+ukr')
+            print(f'text from image: {textFromImage}')
+            text += ' '.join(textFromImage.strip().strip('\n').split())
+            counter += 1
+    cleanup(doc_filename, pdf_filename, *images_filenames)
+    return {'text': text}
 
 
-
-
-
-
-# @app.post('/doc/convert_to_pdf')
-# def convert_to_pdf(file: Annotated[bytes, File()], response: Response):
-#     filename = f'tmp_{time()}_{len(listdir("."))}'
-#     with open(f'{filename}.doc', 'wb') as f:
-#         f.write(file)
-#         f.close()
-#     # try:
-#     convert2(filename + '.doc', filename + '.pdf')
-#     # convert(filename + '.docx', filename + '.pdf')
-#     # except
-#     # cleanup(filename + '.docx', filename + '.pdf')
-#     cleanup(filename + '.doc')
-#     return 'success'
-
-# @app.post('/image/extract_text')
-# async def image_extract_text(file: Annotated[bytes, File()], response: Response):
-
-
-@app.get('/pdf/get', tags=['work_with_files'])
+@app.get('/pdf/get', tags=['technical_endpoints'])
 def get_pdf_list(response: Response):
     return listdir('files')
 
 
-@app.get('/pdf/get/{fileId}', tags=['work_with_files'])
+@app.get('/pdf/get/{fileId}', tags=['technical_endpoints'])
 def get_pdf_by_id(fileId: str, response: Response):
     if os.path.isfile(f'files/{fileId}.pdf'):
         response.status_code = HTTP_200_OK
@@ -300,7 +348,7 @@ def get_pdf_by_id(fileId: str, response: Response):
         return {'error': 'invalid file id'}
 
 
-@app.delete('/pdf/delete/{fileId}', tags=['work_with_files'])
+@app.delete('/pdf/delete/{fileId}', tags=['technical_endpoints'])
 def delete_pdf_by_id(fileId: str, response: Response):
     if os.path.isfile(f'files/{fileId}.pdf'):
         remove(f'files/{fileId}.pdf')
@@ -333,4 +381,23 @@ def cleanup(*filenames):
     :return: _
     """
     for filename in filenames:
-        remove(filename)
+        if os.path.exists(filename):
+            remove(filename)
+
+
+def doc_docx_to_pdf(input_filename, output_filename):
+    file_media_body = MediaFileUpload(input_filename, resumable=True)
+    word_file_id = service.files().create(
+        body={'name': input_filename},
+        media_body=file_media_body,
+        fields='id').execute()['id']
+    googledoc_file_id = service.files().copy(
+        fileId=word_file_id,
+        body={'mimeType': 'application/vnd.google-apps.document'},
+        fields='id').execute()['id']
+    pdf_file = service.files().export(fileId=googledoc_file_id, mimeType='application/pdf').execute()
+    with open(output_filename, 'wb') as f:
+        f.write(pdf_file)
+    service.files().delete(fileId=word_file_id).execute()
+    service.files().delete(fileId=googledoc_file_id).execute()
+    service.files().emptyTrash().execute()
