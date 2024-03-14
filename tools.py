@@ -62,6 +62,30 @@ def doc_docx_to_pdf(input_filename, output_filename, service):
     service.files().emptyTrash().execute()
 
 
+def get_all_text_from_pages(filename, imageReader, pagesIterator):
+    """
+    Returns all text from iterator pagesIterator using imageReader and name of base file
+    :param filename: name of file which working with
+    :param imageReader: object of imageReader class
+    :param pagesIterator: iterator through pages (PdfReader().pages)
+    :return:
+    """
+    counter = 0
+    images_filenames = []
+    text = ''
+    for page in pagesIterator:
+        text += page.extract_text() + '\n'
+        for imageFileObject in page.images:
+            with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
+                f.write(imageFileObject.data)
+            images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
+            textFromImage = imageReader.extract_text(f'{filename}-{counter}-{imageFileObject.name}', language='eng+ukr')
+            # print(f'text from image: {textFromImage}')
+            text += textFromImage
+            counter += 1
+    return images_filenames, text
+
+
 class ImageReader:
     def __init__(self, os):
         if os == 'WINDOWS':

@@ -9,20 +9,14 @@ from starlette.background import BackgroundTask
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_200_OK
 from googleapiclient.errors import HttpError
 
-from tools import ImageReader, cleanup, zip_files, doc_docx_to_pdf, service
-from auth.jwt_handler import HTTPSpecialBearer
+from tools import ImageReader, cleanup, zip_files, doc_docx_to_pdf, service, get_all_text_from_pages
+from auth.auth_handler import HTTPSpecialBearer
 app = FastAPI()
 WEBHOOK_URL = 'https://google.com'
 imageReader = ImageReader('WINDOWS')
 
 
-@app.get("/users/me", dependencies=[Depends(HTTPSpecialBearer())])
-def read_current_user():
-    # return {"scheme": credentials.scheme, "credentials": credentials.credentials}
-    return '222'
-
-
-@app.post('/pdf/cut', tags=['pdf'])
+@app.post('/pdf/cut', dependencies=[Depends(HTTPSpecialBearer())], tags=['pdf'])
 async def cut_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], response: Response):
     """
     Realises cutting functional and returns resulted PDF-file
@@ -68,7 +62,7 @@ async def cut_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, 
     return response
 
 
-@app.post('/pdf/cut_save', tags=['pdf'])
+@app.post('/pdf/cut_save', dependencies=[Depends(HTTPSpecialBearer())], tags=['pdf'])
 async def cut_and_save_pdf(
         file: Annotated[bytes, File()],
         configuration: Annotated[str, Form()],
@@ -116,7 +110,7 @@ async def cut_and_save_pdf(
     return {'info': 'Done!'}
 
 
-@app.post('/pdf/extract_content', tags=['pdf'])
+@app.post('/pdf/extract_content', dependencies=[Depends(HTTPSpecialBearer())], tags=['pdf'])
 async def extract_content(file: Annotated[bytes, File()], response: Response):
     filename = f'tmp_{time()}_{len(os.listdir("."))}'
     pdf_filename = f'{filename}.pdf'
@@ -152,7 +146,7 @@ async def extract_content(file: Annotated[bytes, File()], response: Response):
     return response
 
 
-@app.post('/pdf/get_all_text', tags=['pdf'])
+@app.post('/pdf/get_all_text', dependencies=[Depends(HTTPSpecialBearer())], tags=['pdf'])
 def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
     filename = f'tmp_{time()}_{len(os.listdir("."))}'
     pdf_filename = f'{filename}.pdf'
@@ -165,12 +159,12 @@ def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
         cleanup(pdf_filename)
         response.status_code = HTTP_400_BAD_REQUEST
         return {'error': 'wrong file format'}
-    images_filenames, text = get_all_text_from_pages(filename, filePDF.pages)
+    images_filenames, text = get_all_text_from_pages(filename, imageReader, filePDF.pages)
     cleanup(pdf_filename, *images_filenames)
     return {'text': text}
 
 
-@app.post('/doc/convert_to_pdf', tags=['docs'])
+@app.post('/doc/convert_to_pdf', dependencies=[Depends(HTTPSpecialBearer())], tags=['docs'])
 def convert_doc_or_docx_to_pdf(file: Annotated[bytes, File()], extension: Annotated[str, Form()], response: Response):
     if extension != 'doc' and extension != 'docx':
         response.status_code = HTTP_400_BAD_REQUEST
@@ -196,7 +190,7 @@ def convert_doc_or_docx_to_pdf(file: Annotated[bytes, File()], extension: Annota
         return {'error': error}
 
 
-@app.post('/doc/cut', tags=['docs'])
+@app.post('/doc/cut', dependencies=[Depends(HTTPSpecialBearer())], tags=['docs'])
 def cut_doc(file: Annotated[bytes, File()], configuration: Annotated[str, Form()], extension: Annotated[str, Form()],
             response: Response):
     """Realises cutting functional and returns resulted PDF-file"""
@@ -248,7 +242,7 @@ def cut_doc(file: Annotated[bytes, File()], configuration: Annotated[str, Form()
     return response
 
 
-@app.post('/doc/get_all_text', tags=['docs'])
+@app.post('/doc/get_all_text', dependencies=[Depends(HTTPSpecialBearer())], tags=['docs'])
 def doc_get_all_text(file: Annotated[bytes, File()], extension: Annotated[str, Form()], response: Response):
     if extension not in ['doc', 'docx']:
         response.status_code = HTTP_400_BAD_REQUEST
@@ -270,17 +264,17 @@ def doc_get_all_text(file: Annotated[bytes, File()], extension: Annotated[str, F
         cleanup(doc_filename, pdf_filename)
         response.status_code = HTTP_400_BAD_REQUEST
         return {'error': 'wrong file format'}
-    images_filenames, text = get_all_text_from_pages(filename, filePDF)
+    images_filenames, text = get_all_text_from_pages(filename, imageReader, filePDF.pages)
     cleanup(doc_filename, pdf_filename, *images_filenames)
     return {'text': text}
 
 
-@app.get('/pdf/get', tags=['technical_endpoints'])
+@app.get('/pdf/get', dependencies=[Depends(HTTPSpecialBearer())], tags=['technical_endpoints'])
 def get_pdf_list(response: Response):
     return os.listdir('files')
 
 
-@app.get('/pdf/get/{fileId}', tags=['technical_endpoints'])
+@app.get('/pdf/get/{fileId}', dependencies=[Depends(HTTPSpecialBearer())], tags=['technical_endpoints'])
 def get_pdf_by_id(fileId: str, response: Response):
     if os.path.isfile(f'files/{fileId}.pdf'):
         response.status_code = HTTP_200_OK
@@ -296,7 +290,7 @@ def get_pdf_by_id(fileId: str, response: Response):
         return {'error': 'invalid file id'}
 
 
-@app.delete('/pdf/delete/{fileId}', tags=['technical_endpoints'])
+@app.delete('/pdf/delete/{fileId}', dependencies=[Depends(HTTPSpecialBearer())], tags=['technical_endpoints'])
 def delete_pdf_by_id(fileId: str, response: Response):
     if os.path.isfile(f'files/{fileId}.pdf'):
         cleanup(f'files/{fileId}.pdf')
@@ -307,18 +301,4 @@ def delete_pdf_by_id(fileId: str, response: Response):
         return {'error': 'invalid file id'}
 
 
-def get_all_text_from_pages(filename, pagesIterator):
-    counter = 0
-    images_filenames = []
-    text = ''
-    for page in pagesIterator:
-        text += page.extract_text() + '\n'
-        for imageFileObject in page.images:
-            with open(f'{filename}-{counter}-{imageFileObject.name}', 'wb') as f:
-                f.write(imageFileObject.data)
-            images_filenames.append(f'{filename}-{counter}-{imageFileObject.name}')
-            textFromImage = imageReader.extract_text(f'{filename}-{counter}-{imageFileObject.name}', language='eng+ukr')
-            print(f'text from image: {textFromImage}')
-            text += ' '.join(textFromImage.strip().strip('\n').split())
-            counter += 1
-    return images_filenames, text
+
