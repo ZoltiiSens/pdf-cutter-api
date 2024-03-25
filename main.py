@@ -1,10 +1,12 @@
+import json
 import os
-from fastapi import FastAPI, File, Form, Response, Request, HTTPException, Depends, UploadFile
+from fastapi import FastAPI, File, Form, Response, Depends       # UploadFile HTTPException Request
+from fastapi.encoders import jsonable_encoder
 from typing import Annotated
 from time import time
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.errors import PdfReadError
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_200_OK
 from googleapiclient.errors import HttpError
@@ -82,12 +84,9 @@ async def cut_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, 
 
 
 @app.post('/pdf/cut_save', dependencies=[Depends(HTTPSpecialBearer())], tags=['pdf'])
-async def cut_and_save_pdf(
-        file: Annotated[bytes, File()],
-        configuration: Annotated[str, Form()],
-        fileId: Annotated[str, Form()],
-        response: Response
-):
+async def cut_and_save_pdf(file: Annotated[bytes, File()], configuration: Annotated[str, Form()],
+                           fileId: Annotated[str, Form()], response: Response
+                           ):
     """
     Realises cutting functional, saves cut files, send info to webhook and returns info message
     :param file: (bytes) file bytes
@@ -185,8 +184,8 @@ def pdf_get_all_text(file: Annotated[bytes, File()], response: Response):
 
 @app.post('/pdf/convert_to_zip_images', dependencies=[Depends(HTTPSpecialBearer())], tags=['pdf'])
 def convert_pdf_to_zip_images(file: Annotated[bytes, File()], img_extension: Annotated[str, Form()],
-                                    response: Response,
-                                    width: Annotated[int, File()] = None, height: Annotated[int, File()] = None):
+                              response: Response, zipFiles: Annotated[bool, Form()] = True,
+                              width: Annotated[int, File()] = None, height: Annotated[int, File()] = None):
     if (width is None and height is None) or (width is not None and height is not None):
         response.status_code = HTTP_400_BAD_REQUEST
         return {'error': 'Set one: width or height'}
@@ -220,14 +219,22 @@ def convert_pdf_to_zip_images(file: Annotated[bytes, File()], img_extension: Ann
         pil_image.save(f"{filename}_{page_number + 1}.{img_extension}")
         images_filenames.append(f"{filename}_{page_number + 1}.{img_extension}")
     filePDF.close()
-    zip_filename = zip_files(images_filenames, filename)
-    cleanup(pdf_filename, *images_filenames)
-    response = FileResponse(
-        zip_filename,
-        media_type="application/x-zip-compressed",
-        headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
-        background=BackgroundTask(cleanup, zip_filename)
-    )
+    if zipFiles:
+        zip_filename = zip_files(images_filenames, filename)
+        cleanup(pdf_filename, *images_filenames)
+        response = FileResponse(
+            zip_filename,
+            media_type="application/x-zip-compressed",
+            headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
+            background=BackgroundTask(cleanup, zip_filename)
+        )
+    else:
+        cont = []
+        for image_filename in images_filenames:
+            with open(image_filename, 'rb') as f:
+                cont.append(f.read())
+        cleanup(pdf_filename, *images_filenames)
+        response = StreamingResponse(content=cont)
     return response
 
 
@@ -338,8 +345,8 @@ def doc_get_all_text(file: Annotated[bytes, File()], extension: Annotated[str, F
 
 @app.post('/doc/convert_to_zip_images', dependencies=[Depends(HTTPSpecialBearer())], tags=['docs'])
 def convert_doc_to_zip_images(file: Annotated[bytes, File()], img_extension: Annotated[str, Form()],
-                                    doc_extension: Annotated[str, Form()], response: Response,
-                                    width: Annotated[int, File()] = None, height: Annotated[int, File()] = None):
+                              doc_extension: Annotated[str, Form()], response: Response, zipFiles: Annotated[bool, Form()] = True,
+                              width: Annotated[int, File()] = None, height: Annotated[int, File()] = None):
     if doc_extension not in ['doc', 'docx']:
         response.status_code = HTTP_400_BAD_REQUEST
         return {'error': 'Unsupported extension: write "doc" or "docx"'}
@@ -382,14 +389,22 @@ def convert_doc_to_zip_images(file: Annotated[bytes, File()], img_extension: Ann
         pil_image.save(f"{filename}_{page_number + 1}.{img_extension}")
         images_filenames.append(f"{filename}_{page_number + 1}.{img_extension}")
     filePDF.close()
-    zip_filename = zip_files(images_filenames, filename)
-    cleanup(pdf_filename, *images_filenames)
-    response = FileResponse(
-        zip_filename,
-        media_type="application/x-zip-compressed",
-        headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
-        background=BackgroundTask(cleanup, zip_filename)
-    )
+    if zipFiles:
+        zip_filename = zip_files(images_filenames, filename)
+        cleanup(pdf_filename, *images_filenames)
+        response = FileResponse(
+            zip_filename,
+            media_type="application/x-zip-compressed",
+            headers={'Content-Disposition': f'attachment; filename="{zip_filename}"'},
+            background=BackgroundTask(cleanup, zip_filename)
+        )
+    else:
+        cont = []
+        for image_filename in images_filenames:
+            with open(image_filename, 'rb') as f:
+                cont.append(f.read())
+        cleanup(pdf_filename, *images_filenames)
+        response = StreamingResponse(content=cont)
     return response
 
 
